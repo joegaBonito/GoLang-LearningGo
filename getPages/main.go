@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/csv"
 	"fmt"
 	"log"
@@ -20,10 +21,17 @@ type extractedJob struct {
 	summary  string
 }
 
+type Writer struct {
+	Comma   rune // Field delimiter (set to ',' by NewWriter)
+	UseCRLF bool // True to use \r\n as the line terminator
+	w       *bufio.Writer
+}
+
 var baseURL string = "https://kr.indeed.com/%EC%B7%A8%EC%97%85?q=python&limit=50"
 
 var extractedJobChannel = make(chan extractedJob)
 var jobsChannel = make(chan []extractedJob)
+var writeChannel = make(chan error)
 
 func main() {
 	var jobs []extractedJob
@@ -43,6 +51,11 @@ func main() {
 	fmt.Println("Finished Extracting Jobs Online")
 }
 
+func writeEachRow(w *csv.Writer, jobSlice []string, writeChannel chan<- error) {
+	jwErr := w.Write(jobSlice)
+	writeChannel <- jwErr
+}
+
 func writeJobs(jobs []extractedJob) {
 	file, err := os.Create("jobs.csv")
 	checkErr(err)
@@ -56,10 +69,12 @@ func writeJobs(jobs []extractedJob) {
 
 	for _, job := range jobs {
 		jobSlice := []string{"https://kr.indeed.com/viewjob?jk=" + job.id, job.title, job.location, job.salary, job.summary}
-		jwErr := w.Write(jobSlice)
+		go writeEachRow(w, jobSlice, writeChannel)
+	}
+	for i := 0; i < len(jobs); i++ {
+		jwErr := <-writeChannel
 		checkErr(jwErr)
 	}
-
 }
 
 func getPage(page int, jobsChannel chan<- []extractedJob) {
